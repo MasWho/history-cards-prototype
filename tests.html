@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Round rule tests</title>
+<style>
+body{font:14px/1.5 system-ui,sans-serif;background:#0E0F13;color:#F4F4F5;padding:16px}
+.pass{color:#4ADE80}.fail{color:#FB923C;font-weight:700}
+</style>
+</head>
+<body>
+<h1>Round rule tests</h1>
+<p id="summary">Running…</p>
+<ol id="out"></ol>
+<script type="module">
+import { CARDS, STORIES, MODES } from './js/data.js';
+import { poolFor, newRound, canSkip, skip, flip, mark, undo, isDone, score } from './js/round.js';
+
+const out = document.getElementById('out');
+let passed = 0, failed = 0;
+function test(name, fn) {
+  try { fn(); passed++; out.insertAdjacentHTML('beforeend', `<li class="pass">PASS ${name}</li>`); }
+  catch (e) { failed++; out.insertAdjacentHTML('beforeend', `<li class="fail">FAIL ${name}: ${e.message}</li>`); }
+}
+const assert = (c, m) => { if (!c) throw new Error(m); };
+
+test('data: every story has 10 cards, 2 per mode', () => {
+  for (const s of STORIES) {
+    const cs = CARDS.filter((c) => c.story === s.id);
+    assert(cs.length === 10, `${s.id} has ${cs.length}`);
+    for (const m of MODES) assert(cs.filter((c) => c.mode === m).length === 2, `${s.id} ${m}`);
+  }
+});
+test('data: card ids are unique', () => {
+  assert(new Set(CARDS.map((c) => c.id)).size === CARDS.length, 'duplicate id');
+});
+
+test('rule 1: 5 cards, one per mode, no repeats (500 rounds)', () => {
+  for (let i = 0; i < 500; i++) {
+    const r = newRound(poolFor(CARDS, []));
+    assert(r.slots.length === 5, 'not 5');
+    assert(new Set(r.slots.map((s) => s.card.mode)).size === 5, 'mode repeated');
+    assert(new Set(r.slots.map((s) => s.card.id)).size === 5, 'card repeated');
+  }
+});
+test('rule 1: mode order varies between rounds', () => {
+  const orders = new Set();
+  for (let i = 0; i < 50; i++) orders.add(newRound(poolFor(CARDS, [])).slots.map((s) => s.card.mode).join());
+  assert(orders.size > 5, `only ${orders.size} orders`);
+});
+test('rule 2: only ticked stories are used', () => {
+  for (let i = 0; i < 200; i++) {
+    const r = newRound(poolFor(CARDS, ['emu']));
+    assert(r.slots.every((s) => s.card.story === 'emu'), 'card from another story');
+  }
+});
+test('rule 2: nothing ticked draws from all stories', () => {
+  const seen = new Set();
+  for (let i = 0; i < 200; i++) newRound(poolFor(CARDS, [])).slots.forEach((s) => seen.add(s.card.story));
+  assert(seen.size === 3, `only ${seen.size} stories seen`);
+});
+test('rule 4: skip swaps for the same mode and never repeats', () => {
+  for (let i = 0; i < 200; i++) {
+    const r = newRound(poolFor(CARDS, []));
+    const before = r.slots[0].card;
+    while (canSkip(r)) skip(r);
+    const after = r.slots[0].card;
+    assert(after.mode === before.mode, 'mode changed');
+    assert(new Set(r.slots.map((s) => s.card.id)).size === 5, 'repeat after skip');
+  }
+});
+test('rule 4: one story allows exactly one skip per card, then Skip is off', () => {
+  const r = newRound(poolFor(CARDS, ['molasses']));
+  assert(canSkip(r), 'should be able to skip once');
+  skip(r);
+  assert(!canSkip(r), 'should not be able to skip twice');
+});
+test('rule 4: all stories allow up to five skips of one card', () => {
+  const r = newRound(poolFor(CARDS, []));
+  let n = 0;
+  while (canSkip(r)) { skip(r); n++; }
+  assert(n === 5, `skipped ${n}`);
+});
+test('rule 4: no skip after flipping', () => {
+  const r = newRound(poolFor(CARDS, []));
+  flip(r);
+  assert(!canSkip(r), 'skip offered after flip');
+});
+test('rule 5: score equals number of got-it marks', () => {
+  const r = newRound(poolFor(CARDS, []));
+  const marks = [true, false, true, true, false];
+  marks.forEach((m) => { flip(r); mark(r, m); });
+  assert(isDone(r), 'not done');
+  assert(score(r) === 3, `score ${score(r)}`);
+});
+test('mark needs a flip first', () => {
+  const r = newRound(poolFor(CARDS, []));
+  mark(r, true);
+  assert(r.index === 0, 'advanced without flip');
+});
+test('undo restores the last card, flipped, and the score', () => {
+  const r = newRound(poolFor(CARDS, []));
+  flip(r); mark(r, true);
+  flip(r); mark(r, true);
+  undo(r);
+  assert(r.index === 1 && r.slots[1].flipped && r.slots[1].mark === null, 'bad undo state');
+  assert(score(r) === 1, 'score not reverted');
+  mark(r, false);
+  assert(score(r) === 1 && r.index === 2, 'remark failed');
+});
+
+document.getElementById('summary').innerHTML = failed
+  ? `<span class="fail">${failed} failed</span>, ${passed} passed`
+  : `<span class="pass">All ${passed} passed</span>`;
+</script>
+</body>
+</html>
